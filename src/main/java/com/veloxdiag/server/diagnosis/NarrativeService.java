@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
 
 /**
  * LLM provider: Groq (OpenAI-compatible chat completions API), swapped in
- * from Gemini after the Gemini key pool ran out. GeminiKeyRotator is reused
+ * from Gemini after the Gemini key pool ran out. ApiKeyRotator is reused
  * as-is — it's just a generic key list + rotation, provider-agnostic — only
  * the HTTP call shape changed: Bearer auth header instead of ?key= query
  * param, a messages[] array (system + user) instead of contents[]/parts[],
@@ -84,9 +84,8 @@ public class NarrativeService {
             "scan appears on a large/likely-large table, say so plainly (e.g. 'scans the whole " +
             "exam_questions table'). No hedging, no markdown.";
 
-    private final GeminiKeyRotator keyRotator;
+    private final ApiKeyRotator keyRotator;
     private final SlowQueryPlanRepository slowQueryPlanRepository;
-    private final EndpointBusinessContextRepository businessContextRepository;
     private final DataGrowthService dataGrowthService;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -117,12 +116,10 @@ public class NarrativeService {
         }
     }
 
-    public NarrativeService(GeminiKeyRotator keyRotator, SlowQueryPlanRepository slowQueryPlanRepository,
-                             EndpointBusinessContextRepository businessContextRepository,
+    public NarrativeService(ApiKeyRotator keyRotator, SlowQueryPlanRepository slowQueryPlanRepository,
                              DataGrowthService dataGrowthService) {
         this.keyRotator = keyRotator;
         this.slowQueryPlanRepository = slowQueryPlanRepository;
-        this.businessContextRepository = businessContextRepository;
         this.dataGrowthService = dataGrowthService;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
@@ -153,7 +150,7 @@ public class NarrativeService {
             return cached.narrative;
         }
 
-        String userPrompt = buildFindingsBlock(endpoint, findings, applicationName);
+        String userPrompt = buildFindingsBlock(endpoint, findings);
         try {
             String text = callGroq(SYSTEM_PROMPT, userPrompt, 0.7);
             EndpointNarrative result = new EndpointNarrative(endpoint, text, ruleTypes);
@@ -187,14 +184,9 @@ public class NarrativeService {
         }
     }
 
-    private String buildFindingsBlock(String endpoint, List<DiagnosisFinding> findings, String applicationName) {
+    private String buildFindingsBlock(String endpoint, List<DiagnosisFinding> findings) {
         StringBuilder sb = new StringBuilder();
         sb.append("Endpoint: ").append(endpoint).append("\n");
-
-        String businessContext = buildBusinessContextLine(endpoint, applicationName);
-        if (businessContext != null) {
-            sb.append(businessContext).append("\n");
-        }
 
         sb.append("\nFindings:\n");
         for (DiagnosisFinding f : findings) {
@@ -243,20 +235,6 @@ public class NarrativeService {
                     .append(" (based on ").append(t.getDataPoints()).append(" captures)\n");
         }
         return sb.toString();
-    }
-
-    // Looks up the owner-written "what this endpoint does for the business/
-    // user" note (see EndpointBusinessContext) and formats it as one line
-    // for the prompt. Returns null when applicationName wasn't provided, or
-    // no note exists for this endpoint yet — narrative then behaves exactly
-    // as it did before this feature, describing the technical pattern only.
-    private String buildBusinessContextLine(String endpoint, String applicationName) {
-        if (applicationName == null || applicationName.isBlank()) {
-            return null;
-        }
-        return businessContextRepository.findByApplicationNameAndEndpoint(applicationName, endpoint)
-                .map(ctx -> "Business Context: " + ctx.getDescription())
-                .orElse(null);
     }
 
     // Pulls the most recent real captured SlowQueryPlan(s) for this endpoint —

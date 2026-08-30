@@ -36,7 +36,7 @@ import java.util.stream.Collectors;
  * exception, so suggesting one would be a fabricated, unhelpful guess.
  *
  * LLM provider: Groq (OpenAI-compatible chat completions API), swapped in from
- * Gemini after the Gemini key pool ran out. GeminiKeyRotator is reused as-is —
+ * Gemini after the Gemini key pool ran out. ApiKeyRotator is reused as-is —
  * it's just a generic key list + rotation, provider-agnostic — only the HTTP
  * call shape changed: Bearer auth header instead of ?key= query param, a
  * messages[] array instead of contents[]/parts[], and choices[0].message.content
@@ -62,13 +62,13 @@ public class RecommendationService {
 
     private final DiagnosisService diagnosisService;
     private final SlowQueryPlanRepository slowQueryPlanRepository;
-    private final GeminiKeyRotator keyRotator;
+    private final ApiKeyRotator keyRotator;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
 
     public RecommendationService(DiagnosisService diagnosisService,
                                   SlowQueryPlanRepository slowQueryPlanRepository,
-                                  GeminiKeyRotator keyRotator) {
+                                  ApiKeyRotator keyRotator) {
         this.diagnosisService = diagnosisService;
         this.slowQueryPlanRepository = slowQueryPlanRepository;
         this.keyRotator = keyRotator;

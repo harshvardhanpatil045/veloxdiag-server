@@ -50,12 +50,12 @@ public class ChatService {
 
     private final DiagnosisService diagnosisService;
     private final DashboardService dashboardService;
-    private final GeminiKeyRotator keyRotator;
+    private final ApiKeyRotator keyRotator;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
 
     public ChatService(DiagnosisService diagnosisService, DashboardService dashboardService,
-                        GeminiKeyRotator keyRotator) {
+                        ApiKeyRotator keyRotator) {
         this.diagnosisService = diagnosisService;
         this.dashboardService = dashboardService;
         this.keyRotator = keyRotator;

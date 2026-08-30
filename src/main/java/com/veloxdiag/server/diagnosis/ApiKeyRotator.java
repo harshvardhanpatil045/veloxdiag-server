@@ -12,22 +12,21 @@ import java.util.concurrent.atomic.AtomicInteger;
  * current key hits a 429 (quota exceeded). Shared by NarrativeService and
  * RecommendationService so both features benefit from the same pool.
  *
- * Class name/internal references kept as "GeminiKeyRotator" to avoid
- * touching every constructor call site across the project — this class was
- * always provider-agnostic (just a key list + rotation index), only the
- * config property name changed to reflect the actual provider now in use.
+ * Provider-agnostic by design (just a key list + rotation index) — was
+ * previously named GeminiKeyRotator from an earlier provider, renamed here
+ * to match the actual provider now in use.
  *
  * Config: groq.api.key can be a single key OR a comma-separated list.
  * Example application.properties:
  *   groq.api.key=${GROQ_KEY_1},${GROQ_KEY_2},${GROQ_KEY_3}
  */
 @Component
-public class GeminiKeyRotator {
+public class ApiKeyRotator {
 
     private final List<String> keys;
     private final AtomicInteger index = new AtomicInteger(0);
 
-    public GeminiKeyRotator(@Value("${groq.api.key:}") String keysCsv) {
+    public ApiKeyRotator(@Value("${groq.api.key:}") String keysCsv) {
         List<String> parsed = new ArrayList<>();
         if (keysCsv != null && !keysCsv.isBlank()) {
             for (String k : keysCsv.split(",")) {

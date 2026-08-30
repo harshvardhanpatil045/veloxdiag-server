@@ -40,6 +40,7 @@ class DiagnosisServiceTest {
     private RuleEngineService ruleEngineService;
     private SlowQueryPlanRepository slowQueryPlanRepository;
     private FixSnapshotRepository fixSnapshotRepository;
+    private DismissedFindingService dismissedFindingService;
     private DiagnosisService diagnosisService;
 
     private static final String ENDPOINT = "/api/exams/{id}";
@@ -51,6 +52,7 @@ class DiagnosisServiceTest {
         ruleEngineService = mock(RuleEngineService.class);
         slowQueryPlanRepository = mock(SlowQueryPlanRepository.class);
         fixSnapshotRepository = mock(FixSnapshotRepository.class);
+        dismissedFindingService = mock(DismissedFindingService.class);
 
         when(windowSettings.getLookbackDays(any())).thenReturn(7);
         when(ruleEngineService.evaluate(anyString(), any())).thenReturn(List.of());
@@ -62,10 +64,12 @@ class DiagnosisServiceTest {
                 .thenReturn(Optional.empty());
         when(slowQueryPlanRepository.findByEndpointAndContainsSeqScanTrueAndTimestampAfter(anyString(), any()))
                 .thenReturn(List.of());
+        lenient().when(dismissedFindingService.getDismissedFingerprints(any()))
+                .thenReturn(java.util.Map.of());
 
         diagnosisService = new DiagnosisService(
                 telemetryRepository, windowSettings, ruleEngineService,
-                slowQueryPlanRepository, fixSnapshotRepository);
+                slowQueryPlanRepository, fixSnapshotRepository, dismissedFindingService);
     }
 
     // ---------- helpers ----------

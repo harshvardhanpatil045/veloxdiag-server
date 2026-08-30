@@ -24,6 +24,26 @@ public class DiagnosisFinding {
     // separately open the Fixes page and notice the status flipped.
     private ReopenedInfo reopenedInfo;
 
+    // New field: populated when this exact (endpoint, ruleType) has been
+    // dismissed via DismissedFindingService — see that class for why
+    // dismissal marks a finding rather than removing it from the response.
+    // Null for everything else — no behavior change for findings that were
+    // never dismissed.
+    private DismissedInfo dismissedInfo;
+
+    public static class DismissedInfo {
+        private String dismissedAt;
+        private String note;
+
+        public DismissedInfo(String dismissedAt, String note) {
+            this.dismissedAt = dismissedAt;
+            this.note = note;
+        }
+
+        public String getDismissedAt() { return dismissedAt; }
+        public String getNote() { return note; }
+    }
+
     public static class ReopenedInfo {
         private String markedFixedAt;
         private String note;
@@ -65,4 +85,7 @@ public class DiagnosisFinding {
 
     public ReopenedInfo getReopenedInfo() { return reopenedInfo; }
     public void setReopenedInfo(ReopenedInfo reopenedInfo) { this.reopenedInfo = reopenedInfo; }
+
+    public DismissedInfo getDismissedInfo() { return dismissedInfo; }
+    public void setDismissedInfo(DismissedInfo dismissedInfo) { this.dismissedInfo = dismissedInfo; }
 }

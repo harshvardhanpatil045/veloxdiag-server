@@ -19,6 +19,27 @@ public class DiagnosisService {
 
     static final String DEFAULT_KEY = "__default__";
 
+    // Findings are returned worst-first: HIGH severity before MEDIUM before LOW,
+    // and within the same severity, HIGH confidence before MEDIUM before LOW.
+    // Unknown/missing severity or confidence values (e.g. confidence is null for
+    // most non-correlation findings) sort last within their tier rather than
+    // throwing or floating to the top.
+    private static final Map<String, Integer> SEVERITY_RANK = Map.of("HIGH", 0, "MEDIUM", 1, "LOW", 2);
+    private static final Map<String, Integer> CONFIDENCE_RANK = Map.of("HIGH", 0, "MEDIUM", 1, "LOW", 2);
+    private static final int UNKNOWN_RANK = 3;
+
+    private static int severityRank(DiagnosisFinding f) {
+        return SEVERITY_RANK.getOrDefault(f.getSeverity(), UNKNOWN_RANK);
+    }
+
+    private static int confidenceRank(DiagnosisFinding f) {
+        return CONFIDENCE_RANK.getOrDefault(f.getConfidence(), UNKNOWN_RANK);
+    }
+
+    private static final Comparator<DiagnosisFinding> BY_SEVERITY_THEN_CONFIDENCE =
+            Comparator.comparingInt(DiagnosisService::severityRank)
+                    .thenComparingInt(DiagnosisService::confidenceRank);
+
     private static class Thresholds {
         final double slowRequestThresholdMs;
         final long highErrorRateThreshold;
@@ -54,6 +75,7 @@ public class DiagnosisService {
     private final RuleEngineService ruleEngineService;
     private final SlowQueryPlanRepository slowQueryPlanRepository;
     private final FixSnapshotRepository fixSnapshotRepository;
+    private final DismissedFindingService dismissedFindingService;
 
     private static final Pattern SEQ_SCAN_PATTERN = Pattern.compile(
             "Seq Scan on (\\w+)(?:\\s+\\w+)?\\s*\\(cost=[\\d.]+\\.\\.[\\d.]+ rows=(\\d+)"
@@ -61,12 +83,13 @@ public class DiagnosisService {
 
     public DiagnosisService(TelemetryRepository telemetryRepository, TelemetryWindowSettings windowSettings,
                              RuleEngineService ruleEngineService, SlowQueryPlanRepository slowQueryPlanRepository,
-                             FixSnapshotRepository fixSnapshotRepository) {
+                             FixSnapshotRepository fixSnapshotRepository, DismissedFindingService dismissedFindingService) {
         this.telemetryRepository = telemetryRepository;
         this.windowSettings = windowSettings;
         this.ruleEngineService = ruleEngineService;
         this.slowQueryPlanRepository = slowQueryPlanRepository;
         this.fixSnapshotRepository = fixSnapshotRepository;
+        this.dismissedFindingService = dismissedFindingService;
         thresholdsByApp.put(DEFAULT_KEY, new Thresholds(1000.0, 3, 500, 15, 500));
     }
 
@@ -140,6 +163,9 @@ public class DiagnosisService {
         List<com.veloxdiag.server.diagnosis.engine.RuleDefinitionEntity> rules =
                 ruleEngineService.loadEnabledRules();
 
+        Map<String, DismissedFinding> dismissedFingerprints =
+                dismissedFindingService.getDismissedFingerprints(applicationName);
+
         Map<String, List<SlowQueryPlan>> plansByEndpoint = slowQueryPlanRepository
                 .findByContainsSeqScanTrueAndTimestampAfter(cutoff).stream()
                 .collect(Collectors.groupingBy(p -> EndpointNormalizer.normalize(p.getEndpoint())));
@@ -147,16 +173,18 @@ public class DiagnosisService {
         for (Map.Entry<String, List<Telemetry>> entry : byEndpoint.entrySet()) {
             String endpoint = entry.getKey();
             List<SlowQueryPlan> plansForEndpoint = plansByEndpoint.getOrDefault(endpoint, List.of());
-            findings.addAll(computeEndpointFindings(endpoint, entry.getValue(), plansForEndpoint, rules, thresholds, applicationName));
+            findings.addAll(computeEndpointFindings(endpoint, entry.getValue(), plansForEndpoint, rules, thresholds,
+                    applicationName, dismissedFingerprints));
         }
 
+        findings.sort(BY_SEVERITY_THEN_CONFIDENCE);
         return findings;
     }
 
     private List<DiagnosisFinding> computeEndpointFindings(
             String endpoint, List<Telemetry> records, List<SlowQueryPlan> seqScanPlans,
             List<com.veloxdiag.server.diagnosis.engine.RuleDefinitionEntity> rules, Thresholds thresholds,
-            String applicationName) {
+            String applicationName, Map<String, DismissedFinding> dismissedFingerprints) {
         List<DiagnosisFinding> endpointFindings = new ArrayList<>();
         endpointFindings.addAll(checkSlowRequest(endpoint, records, thresholds));
         endpointFindings.addAll(checkHighErrorRate(endpoint, records, thresholds));
@@ -169,13 +197,16 @@ public class DiagnosisService {
         combined.addAll(correlateFindings(endpoint, records, endpointFindings, thresholds));
         combined.addAll(ruleEngineService.evaluate(endpoint, records, rules));
         attachRegressionWatch(applicationName, combined);
+        attachDismissed(combined, dismissedFingerprints);
 
         return combined;
     }
 
     private List<DiagnosisFinding> computeEndpointFindings(String endpoint, List<Telemetry> records,
-                                                             LocalDateTime cutoff) {
+                                                             LocalDateTime cutoff, String applicationName) {
         Thresholds thresholds = resolveThresholds(null);
+        Map<String, DismissedFinding> dismissedFingerprints =
+                dismissedFindingService.getDismissedFingerprints(applicationName);
         List<DiagnosisFinding> endpointFindings = new ArrayList<>();
         endpointFindings.addAll(checkSlowRequest(endpoint, records, thresholds));
         endpointFindings.addAll(checkHighErrorRate(endpoint, records, thresholds));
@@ -187,7 +218,8 @@ public class DiagnosisService {
         List<DiagnosisFinding> combined = new ArrayList<>(endpointFindings);
         combined.addAll(correlateFindings(endpoint, records, endpointFindings, thresholds));
         combined.addAll(ruleEngineService.evaluate(endpoint, records));
-        attachRegressionWatch(null, combined);
+        attachRegressionWatch(applicationName, combined);
+        attachDismissed(combined, dismissedFingerprints);
 
         return combined;
     }
@@ -215,6 +247,28 @@ public class DiagnosisService {
         }
     }
 
+    // Per-finding dismiss: marks (does not remove) findings matching a
+    // dismissed (endpoint, ruleType) fingerprint, so a dismissed finding
+    // stays visible-but-muted and restorable from the same card rather than
+    // silently disappearing. Skips ROOT_CAUSE_CORRELATION for the same
+    // reason attachRegressionWatch does — no single concrete ruleType to
+    // dismiss against.
+    private void attachDismissed(List<DiagnosisFinding> findings, Map<String, DismissedFinding> dismissedFingerprints) {
+        if (dismissedFingerprints.isEmpty()) return;
+
+        for (DiagnosisFinding finding : findings) {
+            if ("ROOT_CAUSE_CORRELATION".equals(finding.getRuleType())) continue;
+
+            DismissedFinding dismissed = dismissedFingerprints.get(
+                    DismissedFindingService.fingerprintOf(finding.getEndpoint(), finding.getRuleType()));
+
+            if (dismissed != null) {
+                finding.setDismissedInfo(new DiagnosisFinding.DismissedInfo(
+                        dismissed.getDismissedAt().toString(), dismissed.getNote()));
+            }
+        }
+    }
+
     public List<DiagnosisFinding> getFindingsForEndpoint(String endpoint, String applicationName) {
         LocalDateTime cutoff = LocalDateTime.now().minusDays(windowSettings.getLookbackDays(applicationName));
         List<Telemetry> raw = (applicationName == null || applicationName.isBlank())
@@ -224,7 +278,9 @@ public class DiagnosisService {
                 .filter(t -> endpoint.equals(EndpointNormalizer.normalize(t.getEndpoint())))
                 .collect(Collectors.toList());
 
-        return computeEndpointFindings(endpoint, records, cutoff);
+        List<DiagnosisFinding> findings = computeEndpointFindings(endpoint, records, cutoff, applicationName);
+        findings.sort(BY_SEVERITY_THEN_CONFIDENCE);
+        return findings;
     }
 
     private static double stdDev(List<Long> values, double mean) {

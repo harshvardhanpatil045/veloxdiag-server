@@ -6,7 +6,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.veloxdiag.server.diagnosis.DiagnosisFinding;
 import com.veloxdiag.server.diagnosis.DiagnosisService;
-import com.veloxdiag.server.diagnosis.GeminiKeyRotator;
+import com.veloxdiag.server.diagnosis.ApiKeyRotator;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -54,13 +54,13 @@ public class DashboardSummaryService {
             "isn't present in the input. Write it like a teammate's quick status note, not a report header " +
             "— no bullet points, no bold labels, just plain sentences.";
 
-    private final GeminiKeyRotator keyRotator;
+    private final ApiKeyRotator keyRotator;
     private final DashboardService dashboardService;
     private final DiagnosisService diagnosisService;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
 
-    public DashboardSummaryService(GeminiKeyRotator keyRotator, DashboardService dashboardService,
+    public DashboardSummaryService(ApiKeyRotator keyRotator, DashboardService dashboardService,
                                     DiagnosisService diagnosisService) {
         this.keyRotator = keyRotator;
         this.dashboardService = dashboardService;
